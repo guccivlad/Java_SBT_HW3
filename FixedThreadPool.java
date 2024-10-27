@@ -1,65 +1,74 @@
 package ThreadPool;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Queue;
 
 public class FixedThreadPool implements ThreadPool{
-    private final List<Thread> workers;
-    private final Queue<Runnable> blockingQueue;
+    private final Worker[] workers;
+    private final BlockingQueue blockingQueue;
     private final int nThreads;
-    private boolean isShutDown;
 
     public FixedThreadPool(int nThreads) {
-        this.workers = new ArrayList<>(nThreads);
-        this.blockingQueue = new ArrayDeque<>();
+        this.workers = new Worker[nThreads];
+        this.blockingQueue = new BlockingQueue();
         this.nThreads = nThreads;
-        this.isShutDown = false;
     }
 
     @Override
-    public void start() throws InterruptedException {
+    public void start() {
         for(int i = 0; i < nThreads; ++i) {
-            workers.add(new Thread(new workerRoutine()));
-        }
-
-        for(Thread worker: workers) {
-            worker.start();
+            workers[i] = new Worker();
+            workers[i].start();
         }
     }
 
     @Override
     public void execute(Runnable runnable) {
-        synchronized (this) {
-            blockingQueue.add(runnable);
-            notifyAll();
-        }
+        blockingQueue.push(runnable);
     }
 
     @Override
-    public synchronized void shutDown() throws InterruptedException {
+    public void shutDown() throws InterruptedException {
+        for(Worker worker: workers) {
+            worker.interrupt();
+        }
+        for(Worker worker: workers) {
+            worker.join();
+        }
     }
 
-    private class workerRoutine implements Runnable {
+    private class Worker extends Thread {
 
         @Override
         public void run() {
-            while(!isShutDown) {
-                Runnable task;
-                synchronized (FixedThreadPool.this) {
-                    while(blockingQueue.isEmpty()) {
-                        try {
-                            FixedThreadPool.this.wait();
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
+            Runnable task;
 
-                    task = blockingQueue.poll();
+            while(!isInterrupted()) {
+                try {
+                    task = blockingQueue.get();
                     task.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
             }
+        }
+    }
+
+    private class BlockingQueue {
+        private Queue<Runnable> tasks = new ArrayDeque<>();
+
+        public synchronized void push(Runnable task) {
+            tasks.add(task);
+            notifyAll();
+        }
+
+        public synchronized Runnable get() throws InterruptedException {
+            while(tasks.isEmpty()) {
+                wait();
+            }
+            Runnable task = tasks.poll();
+            notifyAll();
+            return task;
         }
     }
 }
